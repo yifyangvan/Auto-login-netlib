@@ -3,13 +3,18 @@ const { chromium } = require('playwright');
 
 const token = process.env.BOT_TOKEN;
 const chatId = process.env.CHAT_ID;
-const accounts = (process.env.ACCOUNTS || "").split(";")
-  .filter(x => x.trim())
-  .map(item => {
-    const [user, pass] = item.split(":");
-    return { user: user?.trim(), pass: pass?.trim() };
-  })
-  .filter(acc => acc.user && acc.pass);
+const account = process.env.ACCOUNT;
+
+if (!account) {
+  console.log('❌ 未配置账号');
+  process.exit(1);
+}
+
+const [user, pass] = account.split(":").map(s => s.trim());
+if (!user || !pass) {
+  console.log('❌ 账号格式错误，应为 username:password');
+  process.exit(1);
+}
 
 async function sendTelegram(message) {
   if (!token || !chatId) return;
@@ -18,7 +23,7 @@ async function sendTelegram(message) {
   const hkTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
   const timeStr = hkTime.toISOString().replace('T', ' ').substr(0, 19) + " HKT";
 
-  const fullMessage = `📌 Netlib 登录通知\n🕒 ${timeStr}\n\n${message}`;
+  const fullMessage = `📌 Netlib 登录通知\n\n${message}`;
 
   try {
     await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -32,123 +37,68 @@ async function sendTelegram(message) {
 }
 
 async function main() {
-  if (accounts.length === 0) {
-    console.log('❌ 未配置账号');
-    await sendTelegram('❌ 未配置账号');
-    return;
-  }
-
-  console.log(`找到 ${accounts.length} 个账号`);
-  let results = [];
-
+  console.log(`开始登录账号: ${user}`);
+  
   const browser = await chromium.launch({ 
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'] // 添加这些参数以提高稳定性
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   
-  for (const { user, pass } of accounts) {
-    let page;
-    try {
-      page = await browser.newPage();
-      
-      // 增加超时设置
-      page.setDefaultTimeout(30000);
-      page.setDefaultNavigationTimeout(30000);
-      
-      console.log(`正在登录: ${user}`);
-      await page.goto('https://www.netlib.re/', { waitUntil: 'networkidle' });
-      await page.waitForTimeout(3000);
-      
-      // 更健壮的选择器
-      await page.click('a:has-text("Login"), text=Login', { timeout: 5000 });
-      await page.waitForTimeout(2000);
-      
-      // 等待输入框出现
-      await page.waitForSelector('input[name="username"], input[type="text"]', { timeout: 5000 });
-      await page.fill('input[name="username"], input[type="text"]', user);
-      await page.waitForTimeout(1000);
-      
-      await page.waitForSelector('input[name="password"], input[type="password"]', { timeout: 5000 });
-      await page.fill('input[name="password"], input[type="password"]', pass);
-      await page.waitForTimeout(1000);
-      
-      await page.click('button:has-text("Validate"), input[type="submit"]', { timeout: 5000 });
-      
-      // 等待页面加载完成
-      await page.waitForLoadState('networkidle');
-      await page.waitForTimeout(5000);
-      
-      // 更健壮的成功检查
-      const successSelectors = [
-        'text=exclusive owner',
-        'text=You are the exclusive owner',
-        'text=Dashboard',
-        `text=${user}` // 页面显示用户名也算成功
-      ];
-      
-      let loginSuccess = false;
-      for (const selector of successSelectors) {
-        const element = await page.$(selector);
-        if (element) {
-          loginSuccess = true;
-          break;
-        }
-      }
-      
-      if (loginSuccess) {
-        results.push(`✅ ${user}`);
-        console.log(`${user} 登录成功`);
-      } else {
-        // 检查是否有错误信息
-        const errorSelectors = [
-          'text=Invalid',
-          'text=Error',
-          'text=Failed',
-          'text=incorrect'
-        ];
-        
-        let errorMsg = "未知错误";
-        for (const selector of errorSelectors) {
-          const element = await page.$(selector);
-          if (element) {
-            const text = await element.textContent();
-            errorMsg = text || "登录失败";
-            break;
-          }
-        }
-        
-        results.push(`❌ ${user} (${errorMsg})`);
-        console.log(`${user} 登录失败: ${errorMsg}`);
-        
-        // 保存截图用于调试
-        await page.screenshot({ path: `/tmp/${user}_error.png` });
-        console.log(`截图已保存: /tmp/${user}_error.png`);
-      }
-      
-    } catch (e) {
-      results.push(`❌ ${user} (异常: ${e.message})`);
-      console.log(`${user} 登录异常: ${e.message}`);
-      
-      // 保存截图用于调试
-      if (page) {
-        await page.screenshot({ path: `/tmp/${user}_exception.png` });
-        console.log(`异常截图已保存: /tmp/${user}_exception.png`);
-      }
-    } finally {
-      if (page) {
-        await page.close();
-      }
+  let page;
+  try {
+    page = await browser.newPage();
+    page.setDefaultTimeout(30000);
+    
+    console.log('正在访问网站...');
+    await page.goto('https://www.netlib.re/', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(3000);
+    
+    console.log('点击登录按钮...');
+    await page.click('text=Login', { timeout: 5000 });
+    
+    // 如果上面失败，可以尝试其他方法
+    // 方法2: 通过XPath查找
+    // await page.click('//a[contains(text(), "Login")]', { timeout: 5000 });
+    
+    // 方法3: 通过CSS选择器查找
+    // await page.click('a[href*="login"]', { timeout: 5000 });
+    
+    await page.waitForTimeout(2000);
+    
+    console.log('填写用户名...');
+    // 使用更通用的选择器
+    await page.fill('input[name="username"], input[type="text"]', user);
+    await page.waitForTimeout(1000);
+    
+    console.log('填写密码...');
+    await page.fill('input[name="password"], input[type="password"]', pass);
+    await page.waitForTimeout(1000);
+    
+    console.log('提交登录...');
+    await page.click('button:has-text("Validate"), input[type="submit"]');
+    
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(5000);
+    
+    const pageContent = await page.content();
+    if (pageContent.includes('exclusive owner') || pageContent.includes(user)) {
+      console.log('✅ 登录成功');
+      await sendTelegram(`✅ ${user} 登录成功`);
+    } else {
+      console.log('❌ 登录失败');
+      const errorText = await page.textContent('body');
+      const errorSnippet = errorText.includes('Error') ? 
+        errorText.match(/Error[^\.]*\.?/)?.[0] || '未知错误' : '未知错误';
+      await sendTelegram(`❌ ${user} 登录失败: ${errorSnippet}`);
     }
     
-    await new Promise(r => setTimeout(r, 3000));
+  } catch (e) {
+    console.log(`❌ 登录异常: ${e.message}`);
+    await sendTelegram(`❌ ${user} 登录异常: ${e.message}`);
+  } finally {
+    if (page) await page.close();
+    await browser.close();
   }
-  
-  await browser.close();
-  const message = `处理完成:\n${results.join('\n')}`;
-  await sendTelegram(message);
 }
 
-main().catch(async (error) => {
-  console.error('脚本执行失败:', error);
-  await sendTelegram(`💥 脚本执行失败: ${error.message}`);
-});
+main().catch(console.error);
